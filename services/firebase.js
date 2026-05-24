@@ -1,64 +1,42 @@
-import { initializeApp, getApps } from 'firebase/app';
-import { getFirestore, doc, collection, onSnapshot, query, where, orderBy, limit, getDocs } from 'firebase/firestore';
+const admin = require('firebase-admin');
 
-const firebaseConfig = {
-  apiKey: "AIzaSyAx-AyJ1lUI4Rgh2rqxXUTLYqoIcBddFco",
-  authDomain: "sol-153d8.firebaseapp.com",
-  projectId: "sol-153d8",
-  storageBucket: "sol-153d8.firebasestorage.app",
-  messagingSenderId: "329991144311",
-  appId: "1:329991144311:web:977fd10874b7b42c8c1772"
-};
+let db = null;
 
-let app;
-let db;
-
-function getFirebaseApp() {
-  if (!firebaseConfig.apiKey) return null;
-  if (!app) {
-    app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
-    db = getFirestore(app);
+function initFirebase() {
+  if (admin.apps.length > 0) {
+    db = admin.firestore();
+    return db;
   }
-  return app;
-}
-
-export function getDb() {
-  if (!db) getFirebaseApp();
+  const raw = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+  if (!raw || raw === '{}') {
+    console.warn('[Firebase] No service account JSON. Using emulator or mock mode.');
+    db = createMockDb();
+    return db;
+  }
+  const serviceAccount = JSON.parse(raw);
+  admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+  db = admin.firestore();
   return db;
 }
 
-export function listenCurrentRound(callback) {
-  const database = getDb();
-  if (!database) return () => {};
-  const ref = doc(database, 'dream_stats', 'currentRound');
-  return onSnapshot(ref, snap => callback(snap.exists() ? snap.data() : null));
+function getDb() {
+  if (!db) return initFirebase();
+  return db;
 }
 
-export function listenGlobalStats(callback) {
-  const database = getDb();
-  if (!database) return () => {};
-  const ref = doc(database, 'dream_stats', 'global');
-  return onSnapshot(ref, snap => callback(snap.exists() ? snap.data() : null));
+function createMockDb() {
+  const store = {};
+  const mockCollection = (name) => ({
+    doc: (id) => ({
+      get: async () => ({ exists: false, data: () => null }),
+      set: async (data) => { store[`${name}/${id}`] = data; },
+      update: async (data) => { store[`${name}/${id}`] = { ...(store[`${name}/${id}`] || {}), ...data }; },
+      ref: { update: async () => {} },
+    }),
+    where: () => ({ where: () => ({ limit: () => ({ get: async () => ({ empty: true, docs: [] }) }) }), orderBy: () => ({ limit: () => ({ get: async () => ({ empty: true, docs: [] }) }) }), limit: () => ({ get: async () => ({ empty: true, docs: [] }) }), get: async () => ({ empty: true, docs: [] }) }),
+    add: async (data) => { const id = Math.random().toString(36); store[`${name}/${id}`] = data; return { id }; },
+  });
+  return { collection: mockCollection };
 }
 
-export function listenTopDreams(callback) {
-  const database = getDb();
-  if (!database) return () => {};
-  const q = query(
-    collection(database, 'dreams'),
-    where('isDeleted', '==', false),
-    where('isRetired', '==', false),
-    orderBy('beliefCount', 'desc'),
-    limit(10)
-  );
-  return onSnapshot(q, snap => callback(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
-}
-
-export function listenDream(dreamId, callback) {
-  const database = getDb();
-  if (!database) return () => {};
-  const ref = doc(database, 'dreams', dreamId);
-  return onSnapshot(ref, snap => callback(snap.exists() ? { id: snap.id, ...snap.data() } : null));
-}
-
-export { getApps };
+module.exports = { initFirebase, getDb };
